@@ -3,8 +3,10 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::vec::Vec;
+use std::collections::VecDeque;
 use std::cmp::max;
 use std::collections::HashMap;
+use itertools::Itertools;
 use regex::Regex;
 
 // copy/paste from Rust By Example
@@ -21,179 +23,20 @@ struct Valve {
     tunnels: Vec<String>,
 }
 
-#[derive(Debug)]
-struct ValveState {
-    score: i32,
-    score2: i32,
-    opened: bool,
-}
-
 const MINUTES: i32 = 30;
-
-fn visit(valves: &HashMap<String, Valve>, states: &mut HashMap<String, ValveState>, code: &str, open: bool, minute: i32, score: i32) -> i32 {
-    let valve = valves.get(code).unwrap();
-    let state = states.get_mut(code).unwrap();
-    let mut new_score = score;
-    let mut max_score = score;
-    let already_opened = state.opened;
-
-    let old_score = state.score;
-    if !open && old_score >= score {
-        return max_score;
-    }
-
-//    println!("visited {code} in min {minute}, score {score} open {open}");
-    if minute == MINUTES {
-        return max_score;
-    }
-
-
-    if open {
-        state.opened = true;
-        new_score += (MINUTES - minute) * valve.rate;
-    }
-
-    state.score = new_score;
-
-    for tun in &valve.tunnels {
-        let mut do_open = false;
-        if tun.eq(code) {
-            if open {
-                // just opened the valve, not visiting it againg
-                continue;
-            } else if valve.rate == 0 || already_opened {
-                // already opened or not worth it
-                continue;
-            }
-            do_open = true;
-        }
-        let visit_score = visit(valves, states, &tun, do_open, minute + 1, new_score);
-        max_score = max(max_score, visit_score);
-    }
-
-    let state = states.get_mut(code).unwrap();
-    state.score = old_score;
-    if open {
-        state.opened = false;
-    }
-
-    max_score
-}
-
-fn dual_visit(valves: &HashMap<String, Valve>, states: &mut HashMap<String, ValveState>,
-              code1: &str, open1: bool, code2: &str, open2: bool, minute: i32, score: i32,
-              mut num_to_open: i32) -> i32 {
-    let valve1 = valves.get(code1).unwrap();
-    let valve2 = valves.get(code2).unwrap();
-    let mut new_score = score;
-    let mut max_score = score;
-
-    let state1 = states.get(code1).unwrap();
-    let already_opened1 = state1.opened;
-    let state2 = states.get(code2).unwrap();
-    let already_opened2 = state2.opened;
-
-    let old_score1 = state1.score;
-    let old_score2 = state2.score2;
-    if (!open1 && old_score1 >= score) || (!open2 && old_score2 >= score) {
-        return max_score;
-    }
-
-//    println!("visited {code1},{code2} in min {minute}, score {score} to_open {num_to_open} open {open1},{open2}");
-    if minute == MINUTES {
-        return max_score;
-    }
-
-    // can't be both opening the same valve
-    if code1.eq(code2) && open1 && open2 {
-        return max_score;
-    }
-
-    if open1 {
-        new_score += (MINUTES - minute) * valve1.rate;
-    }
-    if open2 {
-        new_score += (MINUTES - minute) * valve2.rate;
-    }
-
-    let state1 = states.get_mut(code1).unwrap();
-    if open1 {
-        state1.opened = true;
-        num_to_open -= 1;
-    }
-    state1.score = new_score;
-
-    let state2 = states.get_mut(code2).unwrap();
-    if open2 {
-        state2.opened = true;
-        num_to_open -= 1;
-    }
-    state2.score2 = new_score;
-
-    if num_to_open > 0 {
-
-    for tun1 in &valve1.tunnels {
-        let mut do_open1 = false;
-        if tun1.eq(code1) {
-            if open1 {
-                // just opened the valve, not visiting it againg
-                continue;
-            } else if valve1.rate == 0 || already_opened1 {
-                // already opened or not worth it
-                continue;
-            }
-            do_open1 = true;
-        }
-        for tun2 in &valve2.tunnels {
-            let mut do_open2 = false;
-            if tun2.eq(code2) {
-                if open2 {
-                    // just opened the valve, not visiting it againg
-                    continue;
-                } else if valve2.rate == 0 || already_opened2 {
-                    // already opened or not worth it
-                    continue;
-                }
-                do_open2 = true;
-            }
-            let visit_score = dual_visit(valves, states, &tun1, do_open1, &tun2, do_open2, minute + 1, new_score, num_to_open);
-            max_score = max(max_score, visit_score);
-        }
-    }
-
-    } else {
-        if minute < 15 {
-           // println!("opened all valves in min {minute}");
-        }
-        max_score = max(max_score, new_score);
-    }
-
-    let state1 = states.get_mut(code1).unwrap();
-    state1.score = old_score1;
-    if open1 {
-        state1.opened = false;
-    }
-
-    let state2 = states.get_mut(code2).unwrap();
-    state2.score2 = old_score2;
-    if open2 {
-        state2.opened = false;
-    }
-
-    max_score
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
     let mut valves: HashMap<String, Valve> = HashMap::new();
-    let mut states: HashMap<String, ValveState> = HashMap::new();
+    let mut v2i: HashMap<String, usize> = HashMap::new();
 
     // Valve II has flow rate=0; tunnels lead to valves AA, JJ
     let re = Regex::new(r"Valve ([A-Z]+) has flow rate=(\d+); tunnels? leads? to valves? (.*)").unwrap();
 
     let mut num_to_open = 0;
 
+    v2i.insert("AA".to_string(), 0);
     if let Ok(lines) = read_lines(&file_path) {
         let lines = lines.map(|l| l.unwrap());
         for line in lines {
@@ -213,23 +56,62 @@ fn main() {
                 rate: rate,
                 tunnels: tunvec,
             };
-            let state = ValveState {
-                score: -1,
-                score2: -1,
-                opened: false,
-            };
             valves.insert(code.to_string(), valve);
-            states.insert(code.to_string(), state);
-            if rate > 0 {
+            if rate > 0 && !code.eq("AA") {
                 num_to_open += 1;
+                v2i.insert(code.to_string(), num_to_open);
             }
         }
     }
     println!("{:?}", valves);
-    let max_score = visit(&valves, &mut states, "AA", false, 0, 0);
-    println!("max release pressure: {max_score}");
-    println!("{:?}", valves);
-    println!("{:?}", states);
-    let max_score2 = dual_visit(&valves, &mut states, "AA", false, "AA", false, 4, 0, num_to_open);
-    println!("max release pressure with elephant: {max_score2}");
+    println!("{:?}", v2i);
+    let mut v2v_distances: Vec<Vec<i32>> = Vec::new();
+    let mut rates = vec![0; 1 + num_to_open];
+    for _ in 0..=num_to_open {
+        v2v_distances.push(vec![0; 1 + num_to_open]);
+    }
+    for (valve_code, valve_index) in &v2i {
+        let mut distances: HashMap<&str, i32> = HashMap::new();
+        let mut to_visit: VecDeque<(&str, i32)> = VecDeque::new();
+        to_visit.push_back((valve_code, 0));
+        while !to_visit.is_empty() {
+            let (code, dist) = to_visit.pop_front().unwrap();
+            if !distances.contains_key(code) {
+                distances.insert(code, dist);
+                for tun in &valves[code].tunnels {
+                    to_visit.push_back((&tun, dist+1));
+                }
+            }
+        }
+        println!("distances from {valve_code}: {:?}", distances);
+        let distvec = &mut v2v_distances[*valve_index];
+        for (vc, vi) in &v2i {
+            distvec[*vi] = *distances.get(vc as &str).unwrap();
+        }
+        rates[*valve_index] = valves[valve_code].rate;
+    }
+    println!("{:?}", v2v_distances);
+
+    let mut max_pressure = 0;
+    let start = if valves.get("AA").unwrap().rate > 0 { 0 } else { 1 };
+    for perm in (start..=num_to_open).permutations(num_to_open - (start-1)) {
+        //println!("{:?}", perm);
+        let mut minutes = MINUTES;
+        let mut pressure = 0;
+        let mut prev = 0;
+        for vi in perm {
+            let dist = v2v_distances[prev][vi] + 1;
+            minutes -= dist;
+            if minutes <= 0 {
+                break;
+            }
+            prev = vi;
+            pressure += minutes * rates[vi];
+        }
+        if pressure > max_pressure {
+            max_pressure = pressure;
+            println!("max pressure: {max_pressure}");
+        }
+    }
+    println!("max pressure: {max_pressure}");
 }
