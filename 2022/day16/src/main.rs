@@ -94,24 +94,32 @@ fn main() {
 
     let mut max_pressure = 0;
     let start = if valves.get("AA").unwrap().rate > 0 { 0 } else { 1 };
-    for perm in (start..=num_to_open).permutations(num_to_open - (start-1)) {
-        //println!("{:?}", perm);
-        let mut minutes = MINUTES;
-        let mut pressure = 0;
-        let mut prev = 0;
-        for vi in perm {
-            let dist = v2v_distances[prev][vi] + 1;
-            minutes -= dist;
-            if minutes <= 0 {
-                break;
+    'ext: for perm_len in 1..=(num_to_open - (start-1)) {
+        println!("Trying with permutations of len {perm_len}");
+        for perm in (start..=num_to_open).permutations(perm_len) {
+            //println!("{:?}", perm);
+            let mut minutes = MINUTES;
+            let mut pressure = 0;
+            let mut prev = 0;
+            for vi in perm {
+                let dist = v2v_distances[prev][vi] + 1;
+                minutes -= dist;
+                if minutes <= 0 {
+                    break;
+                }
+                prev = vi;
+                pressure += minutes * rates[vi];
             }
-            prev = vi;
-            pressure += minutes * rates[vi];
+            if pressure > max_pressure {
+                max_pressure = pressure;
+                println!("max pressure: {max_pressure}");
+            }
+            if minutes >= 0 && perm_len < (num_to_open - (start-1)) {
+                println!("permutations not long enough");
+                continue 'ext;
+            }
         }
-        if pressure > max_pressure {
-            max_pressure = pressure;
-            println!("max pressure: {max_pressure}");
-        }
+        break;
     }
     println!("max pressure: {max_pressure}");
 }
