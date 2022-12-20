@@ -25,18 +25,78 @@ struct Valve {
 
 const MINUTES: i32 = 30;
 
+struct Data {
+    valves: HashMap<String, Valve>,
+    v2i: HashMap<String, usize>,
+    num_to_open: usize,
+    v2v_distances: Vec<Vec<i32>>,
+    rates: Vec<i32>,
+}
+
+impl Data {
+    fn visit(&mut self, from: usize, to: usize, mut minutes: i32, mut todo: u64) -> i32 {
+        let dist = self.v2v_distances[from][to] + 1;
+        if minutes < dist {
+            return 0;
+        }
+        minutes -= dist;
+        let my_press = minutes * self.rates[to];
+        let mut max_press = 0;
+        todo &= !(1u64 << to);
+        if todo > 0 {
+            for vi in 1..=self.num_to_open {
+                if (todo & (1u64 << vi)) > 0 {
+                    let nested_press = self.visit(to, vi, minutes, todo);
+                    max_press = max(max_press, nested_press);
+                }
+            }
+        }
+
+        max_press + my_press
+    }
+
+    fn determine_pressure(&mut self, minutes: i32, todo: u64) -> i32 {
+        let mut press = 0;
+        for vi in 1..=self.num_to_open {
+            if (todo & 1u64 << vi) == 0 {
+                continue;
+            }
+            let new_press = self.visit(0, vi, minutes, todo);
+            press = max(press, new_press);
+        }
+        press
+    }
+
+    fn determine_pressure2(&mut self, minutes: i32, mut todo: u64) -> i32 {
+        let mut max_press = 0;
+        todo >>= 1;
+        for t in 0..=((todo+1) >> 1) {
+            let press1 = self.determine_pressure(minutes, t << 1);
+            let press2 = self.determine_pressure(minutes, (todo - t) << 1);
+            max_press = max(max_press, press1 + press2)
+        }
+
+        max_press
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
-    let mut valves: HashMap<String, Valve> = HashMap::new();
-    let mut v2i: HashMap<String, usize> = HashMap::new();
+    let mut data = Data {
+        valves: HashMap::new(),
+        v2i: HashMap::new(),
+        num_to_open: 0,
+        v2v_distances: Vec::new(),
+        rates: Vec::new(),
+    };
 
     // Valve II has flow rate=0; tunnels lead to valves AA, JJ
     let re = Regex::new(r"Valve ([A-Z]+) has flow rate=(\d+); tunnels? leads? to valves? (.*)").unwrap();
+    let mut todo: u64 = 0u64;
 
-    let mut num_to_open = 0;
-
-    v2i.insert("AA".to_string(), 0);
+    data.v2i.insert("AA".to_string(), 0);
+    data.rates.push(0);
     if let Ok(lines) = read_lines(&file_path) {
         let lines = lines.map(|l| l.unwrap());
         for line in lines {
@@ -56,21 +116,22 @@ fn main() {
                 rate: rate,
                 tunnels: tunvec,
             };
-            valves.insert(code.to_string(), valve);
+            data.valves.insert(code.to_string(), valve);
             if rate > 0 && !code.eq("AA") {
-                num_to_open += 1;
-                v2i.insert(code.to_string(), num_to_open);
+                data.num_to_open += 1;
+                data.v2i.insert(code.to_string(), data.num_to_open);
+                data.rates.push(0);
+                todo += 1u64 << data.num_to_open
             }
         }
     }
-    println!("{:?}", valves);
-    println!("{:?}", v2i);
-    let mut v2v_distances: Vec<Vec<i32>> = Vec::new();
-    let mut rates = vec![0; 1 + num_to_open];
-    for _ in 0..=num_to_open {
-        v2v_distances.push(vec![0; 1 + num_to_open]);
+    println!("{:?}", data.valves);
+    println!("{:?}", data.v2i);
+
+    for _ in 0..=data.num_to_open {
+        data.v2v_distances.push(vec![0; 1 + data.num_to_open]);
     }
-    for (valve_code, valve_index) in &v2i {
+    for (valve_code, valve_index) in &data.v2i {
         let mut distances: HashMap<&str, i32> = HashMap::new();
         let mut to_visit: VecDeque<(&str, i32)> = VecDeque::new();
         to_visit.push_back((valve_code, 0));
@@ -78,48 +139,23 @@ fn main() {
             let (code, dist) = to_visit.pop_front().unwrap();
             if !distances.contains_key(code) {
                 distances.insert(code, dist);
-                for tun in &valves[code].tunnels {
+                for tun in &data.valves[code].tunnels {
                     to_visit.push_back((&tun, dist+1));
                 }
             }
         }
         println!("distances from {valve_code}: {:?}", distances);
-        let distvec = &mut v2v_distances[*valve_index];
-        for (vc, vi) in &v2i {
+        let distvec = &mut data.v2v_distances[*valve_index];
+        for (vc, vi) in &data.v2i {
             distvec[*vi] = *distances.get(vc as &str).unwrap();
         }
-        rates[*valve_index] = valves[valve_code].rate;
+        data.rates[*valve_index] = data.valves[valve_code].rate;
     }
-    println!("{:?}", v2v_distances);
+    println!("{:?}", data.v2v_distances);
 
-    let mut max_pressure = 0;
-    let start = if valves.get("AA").unwrap().rate > 0 { 0 } else { 1 };
-    'ext: for perm_len in 1..=(num_to_open - (start-1)) {
-        println!("Trying with permutations of len {perm_len}");
-        for perm in (start..=num_to_open).permutations(perm_len) {
-            //println!("{:?}", perm);
-            let mut minutes = MINUTES;
-            let mut pressure = 0;
-            let mut prev = 0;
-            for vi in perm {
-                let dist = v2v_distances[prev][vi] + 1;
-                minutes -= dist;
-                if minutes <= 0 {
-                    break;
-                }
-                prev = vi;
-                pressure += minutes * rates[vi];
-            }
-            if pressure > max_pressure {
-                max_pressure = pressure;
-                println!("max pressure: {max_pressure}");
-            }
-            if minutes >= 0 && perm_len < (num_to_open - (start-1)) {
-                println!("permutations not long enough");
-                continue 'ext;
-            }
-        }
-        break;
-    }
+    let max_pressure = data.determine_pressure(MINUTES, todo);
     println!("max pressure: {max_pressure}");
+
+    let max_pressure2 = data.determine_pressure2(MINUTES-4, todo);
+    println!("max presssure with elephant: {max_pressure2}");
 }
