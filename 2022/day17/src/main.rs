@@ -3,7 +3,6 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::vec::Vec;
-use std::cmp::min;
 use std::collections::HashMap;
 use std::collections::HashSet;
 
@@ -81,133 +80,101 @@ impl Field {
         let max_jetpos = jets.len();
         let jet_bytes = jets.as_bytes();
         let mut rows = [0u8; SIZE];
-        let mut snaps: HashMap<Vec<u8>, (Vec<u8>, usize, usize)> = HashMap::new();
         let mut jetpos_shape_set: HashSet<(usize, usize)> = HashSet::new();
         let mut jetpos_shape_vec_set: HashMap<(usize, usize, Vec<u8>), (usize, usize)> = HashMap::new(); 
         let mut prev_snap: Option<Vec<u8>> = None;
+        let mut looking_for_cycles = true;
+        let mut skipped_rocks_height: usize = 0;
 
 //        println!("shapes: {}, jets: {}, shapes*jets: {}", shapes.len(), max_jetpos, shapes.len()*max_jetpos);
 
         rows[0] = FLOOR;
 
-        loop {
-
-            if let Some(ref rprev_snap) = prev_snap {
-                let next_snap = snaps.get(rprev_snap);
-                if let Some((next_snap, num_placed, rocks_height_diff)) = next_snap {
-                    println!("found a snapshot, placed {} height diff {}", num_placed, rocks_height_diff);
-/*                    prev_snap = Some(next_snap.clone());
-                    self.rocks_height += rocks_height_diff;
-                    self.height = self.rocks_height;
-                    remaining -= chunk_size;
-                    continue;*/
-                }
+        let mut jetpos: usize = 0;
+        let prev_remaining = remaining;
+        let rocks_height_prev = self.rocks_height;
+        for shape in shapes.iter().cycle() {
+//            println!("inserting shape: {:?}", shape);
+//            println!("{}", rows[0]);
+            let mut shape_row = self.rocks_height + 3;
+            let mut shape_col = INSERT_COL;
+            let need_rows = shape_row + shape.height;
+            for i in self.height..need_rows {
+                rows[i % SIZE] = 0;
+                self.height += 1;
             }
-/*
-            if let Some(ref prev_snap) = prev_snap {
-                for i in 0..SIZE {
-                    rows[i] = 0;
-                }
-
-                for i in 0..SNAPSIZE {
-                    rows[(self.rocks_height - SNAPSIZE + i) % SIZE] = prev_snap[i];
-                }
-            }
-*/
-            let mut jetpos: usize = 0;
-            let prev_remaining = remaining;
-            let rocks_height_prev = self.rocks_height;
-            for shape in shapes.iter().cycle() {
-    //            println!("inserting shape: {:?}", shape);
-    //            println!("{}", rows[0]);
-                let mut shape_row = self.rocks_height + 3;
-                let mut shape_col = INSERT_COL;
-                let need_rows = shape_row + shape.height;
-                for i in self.height..need_rows {
-                    rows[i % SIZE] = 0;
-                    self.height += 1;
-                }
-                let mut above_rocks = 3;
-                loop {
-    //                println!("{}", rows[0]);
-                    let jet = jet_bytes[jetpos % max_jetpos];
-                    jetpos += 1;
-                    let mut jet_col = shape_col;
-                    match jet {
-                        b'<' => {
-                            if shape_col >= 1 {
-                                if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col - 1, &rows) {
-                                    jet_col = shape_col - 1;
-                                }
+            let mut above_rocks = 3;
+            loop {
+//                println!("{}", rows[0]);
+                let jet = jet_bytes[jetpos % max_jetpos];
+                jetpos += 1;
+                let mut jet_col = shape_col;
+                match jet {
+                    b'<' => {
+                        if shape_col >= 1 {
+                            if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col - 1, &rows) {
+                                jet_col = shape_col - 1;
                             }
-                        },
-                        b'>' => {
-                            if shape_col + shape.width < WIDTH {
-                                if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col + 1, &rows) {
-                                    jet_col = shape_col + 1;
-                                }
+                        }
+                    },
+                    b'>' => {
+                        if shape_col + shape.width < WIDTH {
+                            if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col + 1, &rows) {
+                                jet_col = shape_col + 1;
                             }
-                        },
-                        _ => { todo!("unknown jet {}", jet); },
-                    };
-                    shape_col = jet_col;
-    //                println!("new col after jet: {shape_col}");
-                    if above_rocks > 0 || self.try_move_down_shape(shape, shape_row, shape_col, &mut rows) {
-                        shape_row -= 1;
-                        above_rocks -= 1;
-    //                    println!("new row after fall: {shape_row}");
-                    } else {
-                        break;
-                    }
-                }
-                remaining -= 1;
-                if remaining == 0 {
-                    break;
-                }
-
-                let shape_num = (num_shapes - remaining) % shapes.len();
-                let jet_num = jetpos % max_jetpos;
-                if jetpos_shape_set.contains(&(jet_num, shape_num)) {
-                    println!("possible cycle at {} {}", jet_num, shape_num);
-                    let mut snapvec: Vec<u8> = Vec::new();
-                    for i in 0..SNAPSIZE {
-                        snapvec.push(rows[(self.rocks_height - SNAPSIZE + i) % SIZE]);
-                    }
-                    let key = (jet_num, shape_num, snapvec);
-                    if jetpos_shape_vec_set.contains_key(&key) {
-                        println!("cycle found!");
-                        break;
-                    } else {
-                        jetpos_shape_vec_set.insert(key, (self.rocks_height, remaining));
-                    }
+                        }
+                    },
+                    _ => { todo!("unknown jet {}", jet); },
+                };
+                shape_col = jet_col;
+//                println!("new col after jet: {shape_col}");
+                if above_rocks > 0 || self.try_move_down_shape(shape, shape_row, shape_col, &mut rows) {
+                    shape_row -= 1;
+                    above_rocks -= 1;
+//                    println!("new row after fall: {shape_row}");
                 } else {
-                    jetpos_shape_set.insert((jet_num, shape_num));
-                }
-
-                println!("{} and {}", jetpos % max_jetpos, (prev_remaining - remaining) % shapes.len());
-                if (jetpos % max_jetpos == 0) && ((prev_remaining - remaining) % shapes.len()) == 0 {
                     break;
                 }
             }
-
+            remaining -= 1;
             if remaining == 0 {
                 break;
             }
 
-            let mut snapvec: Vec<u8> = Vec::new();
-            for i in 0..SNAPSIZE {
-                snapvec.push(rows[(self.rocks_height - SNAPSIZE + i) % SIZE])
-            }
-            println!("{:?}", snapvec);
-
-            if let Some(ref prev_snap) = prev_snap {
-                println!("inserting");
-                snaps.insert(prev_snap.clone(), (snapvec.clone(), prev_remaining - remaining,
-                                                 self.rocks_height - rocks_height_prev));
+            if !looking_for_cycles {
+                continue;
             }
 
-            prev_snap = Some(snapvec);
+            let shape_num = (num_shapes - remaining) % shapes.len();
+            let jet_num = jetpos % max_jetpos;
+            if jetpos_shape_set.contains(&(jet_num, shape_num)) {
+                println!("possible cycle at {} {}", jet_num, shape_num);
+                let mut snapvec: Vec<u8> = Vec::new();
+                for i in 0..SNAPSIZE {
+                    snapvec.push(rows[(self.rocks_height - SNAPSIZE + i) % SIZE]);
+                }
+                let key = (jet_num, shape_num, snapvec);
+                if jetpos_shape_vec_set.contains_key(&key) {
+                    let (old_rocks_height, old_remaining) = jetpos_shape_vec_set.get(&key).unwrap();
+                    let cycle_shapes = old_remaining - remaining;
+                    let cycle_rocks = self.rocks_height - old_rocks_height;
+                    println!("cycle found! {} shapes {} rock_height", cycle_shapes, cycle_rocks);
+                    let num_cycles = remaining / cycle_shapes;
+                    skipped_rocks_height = num_cycles * cycle_rocks;
+                    remaining -= num_cycles * cycle_shapes;
+                    println!("fast forward {} cycles: {} shapes {} rock_height", num_cycles, num_cycles * cycle_shapes, skipped_rocks_height);
+                    looking_for_cycles = false;
+                    if remaining == 0 {
+                        break;
+                    }
+                } else {
+                    jetpos_shape_vec_set.insert(key, (self.rocks_height, remaining));
+                }
+            } else {
+                jetpos_shape_set.insert((jet_num, shape_num));
+            }
         }
+        self.rocks_height += skipped_rocks_height;
     }
 }
 
