@@ -3,7 +3,9 @@ use std::fs::File;
 use std::io::{self, BufRead};
 use std::path::Path;
 use std::vec::Vec;
-use std::collections::VecDeque;
+use std::cmp::min;
+use std::collections::HashMap;
+use std::collections::HashSet;
 
 // copy/paste from Rust By Example
 // https://doc.rust-lang.org/rust-by-example/std_misc/file/read_lines.html
@@ -16,126 +18,206 @@ where P: AsRef<Path>, {
 const WIDTH: u8 = 7;
 const INSERT_COL: u8 = 2;
 const FLOOR: u8 = 127;
+const SIZE: usize = 2048;
+const SNAPSIZE: usize = 20;
 
 #[derive(Debug)]
 struct Shape {
     rows: Vec<u8>,
     width: u8,
     height: usize,
+    down_move_height: usize,
 }
 
 #[derive(Debug)]
 struct Field {
-    rows: VecDeque<u8>,
     height: usize,
     rocks_height: usize,
-    trimmed: usize,
 }
 
 impl Field {
     fn new() -> Self {
-        let mut field = Field {
-            rows: VecDeque::new(),
+        let field = Field {
             height: 1,
             rocks_height: 1,
-            trimmed: 0,
         };
-        field.rows.push_back(FLOOR);
         field
     }
-/*
-    fn print(&self) {
-        for row in self.rows.iter().rev() {
-            let line = std::str::from_utf8(row).unwrap();
-            println!("{}", line);
-        }
-    }
-*/
-    fn shape_fits(&self, shape: &Shape, shape_row: usize, shape_col: u8) -> bool {
+
+    fn shape_fits(&self, shape: &Shape, shape_row: usize, shape_col: u8, rows: &[u8]) -> bool {
         let colshift = WIDTH - shape_col - shape.width;
         for rownum in 0..shape.height {
-            if (self.rows[shape_row+rownum-self.trimmed] & (shape.rows[rownum] << colshift)) != 0 {
+            if (rows[(shape_row + rownum) % SIZE] & (shape.rows[rownum] << colshift)) != 0 {
                 return false;
             }
         }
         true
     }
 
-    fn place_shape(&mut self, shape: &Shape, shape_row: usize, shape_col: u8) {
+    // true if fits at shape_row - 1; false if not; placed on shape_row
+    fn try_move_down_shape(&mut self, shape: &Shape, shape_row: usize, shape_col: u8, rows: &mut [u8]) -> bool {
         let colshift = WIDTH - shape_col - shape.width;
+        let mut ret = true;
+        for rownum in 0..shape.down_move_height {
+            if (rows[(shape_row - 1 + rownum) % SIZE] & (shape.rows[rownum] << colshift)) != 0 {
+                ret = false;
+                break;
+            }
+        }
+        if ret {
+            return true;
+        }
         for rownum in 0..shape.height {
-            self.rows[shape_row+rownum-self.trimmed] |= shape.rows[rownum] << colshift;
+            rows[(shape_row + rownum) % SIZE] |= shape.rows[rownum] << colshift;
         }
         if shape_row + shape.height > self.rocks_height {
             self.rocks_height = shape_row + shape.height;
         }
-        if self.rocks_height > self.trimmed + 2000 {
-            self.rows.drain(0..1000);
-            self.trimmed += 1000;
-        }
+        false
     }
 
-    fn add_shapes(&mut self, shapes: &[Shape], jets: &str, mut remaining: u64) {
+    fn add_shapes(&mut self, shapes: &[Shape], jets: &str, num_shapes: usize) {
+        let mut remaining = num_shapes;
         let max_jetpos = jets.len();
-        let mut jetpos = 0;
         let jet_bytes = jets.as_bytes();
+        let mut rows = [0u8; SIZE];
+        let mut snaps: HashMap<Vec<u8>, (Vec<u8>, usize, usize)> = HashMap::new();
+        let mut jetpos_shape_set: HashSet<(usize, usize)> = HashSet::new();
+        let mut jetpos_shape_vec_set: HashMap<(usize, usize, Vec<u8>), (usize, usize)> = HashMap::new(); 
+        let mut prev_snap: Option<Vec<u8>> = None;
 
-        for shape in shapes.iter().cycle() {
-//            println!("inserting shape: {:?}", shape);
-            let mut shape_row = self.rocks_height + 3;
-            let mut shape_col = INSERT_COL;
-            let need_rows = shape_row + shape.height;
-            for _ in self.height..need_rows {
-                self.rows.push_back(0);
-                self.height += 1;
+//        println!("shapes: {}, jets: {}, shapes*jets: {}", shapes.len(), max_jetpos, shapes.len()*max_jetpos);
+
+        rows[0] = FLOOR;
+
+        loop {
+
+            if let Some(ref rprev_snap) = prev_snap {
+                let next_snap = snaps.get(rprev_snap);
+                if let Some((next_snap, num_placed, rocks_height_diff)) = next_snap {
+                    println!("found a snapshot, placed {} height diff {}", num_placed, rocks_height_diff);
+/*                    prev_snap = Some(next_snap.clone());
+                    self.rocks_height += rocks_height_diff;
+                    self.height = self.rocks_height;
+                    remaining -= chunk_size;
+                    continue;*/
+                }
             }
-            let mut above_rocks = 3;
-            loop {
-                let jet = jet_bytes[jetpos % max_jetpos];
-                jetpos += 1;
-                let mut jet_col = shape_col;
-                match jet {
-                    b'<' => {
-                        if shape_col >= 1 {
-                            if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col - 1) {
-                                jet_col = shape_col - 1;
+/*
+            if let Some(ref prev_snap) = prev_snap {
+                for i in 0..SIZE {
+                    rows[i] = 0;
+                }
+
+                for i in 0..SNAPSIZE {
+                    rows[(self.rocks_height - SNAPSIZE + i) % SIZE] = prev_snap[i];
+                }
+            }
+*/
+            let mut jetpos: usize = 0;
+            let prev_remaining = remaining;
+            let rocks_height_prev = self.rocks_height;
+            for shape in shapes.iter().cycle() {
+    //            println!("inserting shape: {:?}", shape);
+    //            println!("{}", rows[0]);
+                let mut shape_row = self.rocks_height + 3;
+                let mut shape_col = INSERT_COL;
+                let need_rows = shape_row + shape.height;
+                for i in self.height..need_rows {
+                    rows[i % SIZE] = 0;
+                    self.height += 1;
+                }
+                let mut above_rocks = 3;
+                loop {
+    //                println!("{}", rows[0]);
+                    let jet = jet_bytes[jetpos % max_jetpos];
+                    jetpos += 1;
+                    let mut jet_col = shape_col;
+                    match jet {
+                        b'<' => {
+                            if shape_col >= 1 {
+                                if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col - 1, &rows) {
+                                    jet_col = shape_col - 1;
+                                }
                             }
-                        }
-                    },
-                    b'>' => {
-                        if shape_col + shape.width < WIDTH {
-                            if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col + 1) {
-                                jet_col = shape_col + 1;
+                        },
+                        b'>' => {
+                            if shape_col + shape.width < WIDTH {
+                                if above_rocks > 0 || self.shape_fits(shape, shape_row, shape_col + 1, &rows) {
+                                    jet_col = shape_col + 1;
+                                }
                             }
-                        }
-                    },
-                    _ => { todo!("unknown jet {}", jet); },
-                };
-                shape_col = jet_col;
-//                println!("new col after jet: {shape_col}");
-                if above_rocks > 0 || self.shape_fits(shape, shape_row - 1, shape_col) {
-                    shape_row -= 1;
-  //                  println!("new row after fall: {shape_row}");
-                } else {
-                    self.place_shape(shape, shape_row, shape_col);
+                        },
+                        _ => { todo!("unknown jet {}", jet); },
+                    };
+                    shape_col = jet_col;
+    //                println!("new col after jet: {shape_col}");
+                    if above_rocks > 0 || self.try_move_down_shape(shape, shape_row, shape_col, &mut rows) {
+                        shape_row -= 1;
+                        above_rocks -= 1;
+    //                    println!("new row after fall: {shape_row}");
+                    } else {
+                        break;
+                    }
+                }
+                remaining -= 1;
+                if remaining == 0 {
                     break;
                 }
-                above_rocks -= 1;
+
+                let shape_num = (num_shapes - remaining) % shapes.len();
+                let jet_num = jetpos % max_jetpos;
+                if jetpos_shape_set.contains(&(jet_num, shape_num)) {
+                    println!("possible cycle at {} {}", jet_num, shape_num);
+                    let mut snapvec: Vec<u8> = Vec::new();
+                    for i in 0..SNAPSIZE {
+                        snapvec.push(rows[(self.rocks_height - SNAPSIZE + i) % SIZE]);
+                    }
+                    let key = (jet_num, shape_num, snapvec);
+                    if jetpos_shape_vec_set.contains_key(&key) {
+                        println!("cycle found!");
+                        break;
+                    } else {
+                        jetpos_shape_vec_set.insert(key, (self.rocks_height, remaining));
+                    }
+                } else {
+                    jetpos_shape_set.insert((jet_num, shape_num));
+                }
+
+                println!("{} and {}", jetpos % max_jetpos, (prev_remaining - remaining) % shapes.len());
+                if (jetpos % max_jetpos == 0) && ((prev_remaining - remaining) % shapes.len()) == 0 {
+                    break;
+                }
             }
-            remaining -= 1;
+
             if remaining == 0 {
                 break;
             }
+
+            let mut snapvec: Vec<u8> = Vec::new();
+            for i in 0..SNAPSIZE {
+                snapvec.push(rows[(self.rocks_height - SNAPSIZE + i) % SIZE])
+            }
+            println!("{:?}", snapvec);
+
+            if let Some(ref prev_snap) = prev_snap {
+                println!("inserting");
+                snaps.insert(prev_snap.clone(), (snapvec.clone(), prev_remaining - remaining,
+                                                 self.rocks_height - rocks_height_prev));
+            }
+
+            prev_snap = Some(snapvec);
         }
     }
 }
 
 impl Shape {
-    fn new(arr: &[&str]) -> Self {
+    fn new(arr: &[&str], down_move_height: usize) -> Self {
         let mut shape = Shape {
             rows: Vec::new(),
             width: 0,
             height: 0,
+            down_move_height: down_move_height,
         };
         for row in arr {
             let mut val: u8 = 0;
@@ -158,18 +240,18 @@ impl Shape {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
-    let num_shapes: u64 = args[2].parse().unwrap();
-    let shapes = [Shape::new(&["####"]),
-        Shape::new(&[".#.", "###", ".#."]),
-        Shape::new(&["..#", "..#", "###"]),
-        Shape::new(&["#", "#", "#", "#"]),
-        Shape::new(&["##", "##"])];
+    let num_shapes: usize = args[2].parse().unwrap();
+    let shapes = [Shape::new(&["####"], 1),
+        Shape::new(&[".#.", "###", ".#."], 2),
+        Shape::new(&["..#", "..#", "###"], 1),
+        Shape::new(&["#", "#", "#", "#"], 1),
+        Shape::new(&["##", "##"], 1)];
 
-    println!("{:?}", shapes);
+//    println!("{:?}", shapes);
 
     let mut lines = read_lines(&file_path).unwrap();
     let line = lines.next().unwrap().unwrap();
-    println!("{}", line);
+//    println!("{}", line);
 
     let mut field = Field::new();
 
@@ -177,7 +259,5 @@ fn main() {
 //    field.print();
     println!("tower height: {}", field.rocks_height - 1);
 //    println!("{:?}", field);
-
-
 
 }
