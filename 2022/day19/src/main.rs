@@ -45,85 +45,67 @@ struct State {
 */
 }
 
-#[derive(PartialEq)]
-enum BuildAction {
-    OreRobot,
-    ClayRobot,
-    ObsRobot,
-    GeoRobot,
-    NoRobot,
-}
-
 impl State {
-    fn check_action(&self, bp: &Blueprint, action: &BuildAction) -> bool {
-        match action {
-            BuildAction::OreRobot => self.ore >= bp.ore_ore && bp.ore_max > self.ore_rob,
-            BuildAction::ClayRobot => self.ore >= bp.clay_ore && bp.geo_obs > self.obs_rob && bp.obs_clay > (self.clay_rob + (self.clay / bp.obs_clay)),
-            BuildAction::ObsRobot => self.ore >= bp.obs_ore && self.clay >= bp.obs_clay && bp.geo_obs > self.obs_rob,
-            BuildAction::GeoRobot => self.ore >= bp.geo_ore && self.obs >= bp.geo_obs,
-            BuildAction::NoRobot => true,
-        }
-    }
-
     fn collect_stuff(&mut self) {
         self.ore += self.ore_rob;
         self.clay += self.clay_rob;
         self.obs += self.obs_rob;
         self.geo += self.geo_rob;
     }
-
-    fn perform_action(&mut self, bp: &Blueprint, action: &BuildAction) {
-        self.collect_stuff();
-        match action {
-            BuildAction::OreRobot => {
-                self.ore -= bp.ore_ore;
-//                self.ore_proj -= bp.ore_ore;
-                self.ore_rob += 1;
-//                self.ore_proj += min;
-            },
-            BuildAction::ClayRobot => {
-                self.ore -= bp.clay_ore;
-//                self.ore_proj -= bp.clay_ore;
-                self.clay_rob += 1;
-//                self.clay_proj += min;
-            },
-            BuildAction::ObsRobot => {
-                self.ore -= bp.obs_ore;
-//                self.ore_proj -= bp.obs_ore;
-                self.clay -= bp.obs_clay;
-//                self.clay_proj -= bp.obs_clay;
-                self.obs_rob += 1;
-//                self.obs_proj += min;
-            },
-            BuildAction::GeoRobot => {
-                self.ore -= bp.geo_ore;
-//                self.ore_proj -= bp.geo_ore;
-                self.obs -= bp.geo_obs;
-//                self.obs_proj -= bp.geo_obs;
-                self.geo_rob += 1;
-            }
-            BuildAction::NoRobot => { },
-        }
-    }
 }
 
 fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
-    if min == 0 {
-        *quality = max(*quality, state.geo);
+    if min == 1 {
+        // too late to build anything, just collect obsidian and return
+        *quality = max(*quality, state.geo + state.geo_rob);
         return;
     }
 
-    for action in [BuildAction::GeoRobot, BuildAction::ObsRobot, BuildAction::OreRobot, BuildAction::ClayRobot, BuildAction::NoRobot] {
-        if state.check_action(bp, &action) {
-            let mut state = state.clone();
-            state.perform_action(bp, &action);
-            tick(bp, &state, min - 1, quality);
+    let need_obs = bp.geo_obs > state.obs_rob;
+    let need_clay = need_obs && bp.obs_clay > (state.clay_rob + (state.clay / bp.obs_clay));
+    let need_ore = bp.ore_max > state.ore_rob;
 
-            // not sure if it's valid - it's not, as evidenced by part 2 sample blueprint 1
-//            if action == BuildAction::GeoRobot || action == BuildAction::ObsRobot {
-//                break;
-//            }
-        }
+    let mut new_state = state.clone();
+    new_state.collect_stuff();
+
+    if need_ore && state.ore >= bp.ore_ore {
+        new_state.ore -= bp.ore_ore;
+        new_state.ore_rob += 1;
+        tick(bp, &new_state, min - 1, quality);
+        new_state.ore += bp.ore_ore;
+        new_state.ore_rob -= 1;
+    }
+
+    if need_clay && state.ore >= bp.clay_ore {
+        new_state.ore -= bp.clay_ore;
+        new_state.clay_rob += 1;
+        tick(bp, &new_state, min - 1, quality);
+        new_state.ore += bp.clay_ore;
+        new_state.clay_rob -= 1;
+    }
+
+    if need_obs && state.ore >= bp.obs_ore && state.clay >= bp.obs_clay {
+        new_state.ore -= bp.obs_ore;
+        new_state.clay -= bp.obs_clay;
+        new_state.obs_rob += 1;
+        tick(bp, &new_state, min - 1, quality);
+        new_state.ore += bp.obs_ore;
+        new_state.clay += bp.obs_clay;
+        new_state.obs_rob -= 1;
+    }
+
+    if state.ore >= bp.geo_ore && state.obs >= bp.geo_obs {
+        new_state.ore -= bp.geo_ore;
+        new_state.obs -= bp.geo_obs;
+        new_state.geo_rob += 1;
+        tick(bp, &new_state, min - 1, quality);
+        new_state.ore += bp.geo_ore;
+        new_state.obs += bp.geo_obs;
+        new_state.geo_rob -= 1;
+    }
+
+    if true {
+        tick(bp, &new_state, min - 1, quality);
     }
 }
 
