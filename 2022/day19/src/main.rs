@@ -25,7 +25,7 @@ struct Blueprint {
     geo_obs: i32,
 }
 
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct State {
     ore: i32,
     clay: i32,
@@ -123,9 +123,9 @@ impl State {
     }
 }
 
-const MINUTES: i32 = 32;
+const MINUTES: i32 = 24;
 
-fn tick(bp: &Blueprint, state: &mut State, min: i32) -> i32 {
+fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
     let mut geodes_made = 0;
 
     if min == MINUTES {
@@ -134,14 +134,14 @@ fn tick(bp: &Blueprint, state: &mut State, min: i32) -> i32 {
 
     for action in [BuildAction::GeoRobot, BuildAction::ObsRobot, BuildAction::OreRobot, BuildAction::ClayRobot, BuildAction::NoRobot] {
         if state.check_action(bp, &action) {
+            let mut state = state.clone();
             state.perform_action(bp, &action);
-            geodes_made = max(geodes_made, tick(bp, state, min + 1));
-            state.undo_action(bp, &action);
+            geodes_made = max(geodes_made, tick(bp, &state, min + 1));
 
-            // not sure if it's valid
-            if action == BuildAction::GeoRobot || action == BuildAction::ObsRobot {
-                break;
-            }
+            // not sure if it's valid - it's not, as evidenced by part 2 sample blueprint 1
+//            if action == BuildAction::GeoRobot || action == BuildAction::ObsRobot {
+//                break;
+//            }
         }
     }
 
@@ -175,7 +175,7 @@ fn main() {
             let mut state = State::default();
             state.ore_rob = 1;
 
-            let quality = tick(&bp, &mut state, 0);
+            let quality = tick(&bp, &state, 0);
             println!("blueprint {} quality {}", bp.id, quality);
             quality_level += bp.id * quality;
         }
