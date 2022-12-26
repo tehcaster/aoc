@@ -58,7 +58,7 @@ impl State {
     fn check_action(&self, bp: &Blueprint, action: &BuildAction) -> bool {
         match action {
             BuildAction::OreRobot => self.ore >= bp.ore_ore && bp.ore_max > self.ore_rob,
-            BuildAction::ClayRobot => self.ore >= bp.clay_ore && bp.obs_clay > self.clay_rob,
+            BuildAction::ClayRobot => self.ore >= bp.clay_ore && bp.geo_obs > self.obs_rob && bp.obs_clay > (self.clay_rob + (self.clay / bp.obs_clay)),
             BuildAction::ObsRobot => self.ore >= bp.obs_ore && self.clay >= bp.obs_clay && bp.geo_obs > self.obs_rob,
             BuildAction::GeoRobot => self.ore >= bp.geo_ore && self.obs >= bp.geo_obs,
             BuildAction::NoRobot => true,
