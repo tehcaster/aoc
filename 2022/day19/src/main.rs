@@ -107,18 +107,17 @@ impl State {
     }
 }
 
-fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
-    let mut geodes_made = 0;
-
+fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
     if min == 0 {
-        return state.geo;
+        *quality = max(*quality, state.geo);
+        return;
     }
 
     for action in [BuildAction::GeoRobot, BuildAction::ObsRobot, BuildAction::OreRobot, BuildAction::ClayRobot, BuildAction::NoRobot] {
         if state.check_action(bp, &action) {
             let mut state = state.clone();
             state.perform_action(bp, &action);
-            geodes_made = max(geodes_made, tick(bp, &state, min - 1));
+            tick(bp, &state, min - 1, quality);
 
             // not sure if it's valid - it's not, as evidenced by part 2 sample blueprint 1
 //            if action == BuildAction::GeoRobot || action == BuildAction::ObsRobot {
@@ -126,8 +125,6 @@ fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
 //            }
         }
     }
-
-    geodes_made
 }
 
 fn main() {
@@ -162,12 +159,13 @@ fn main() {
                 ore_max: 0,
             };
 
-            bp.ore_max = max(bp.ore_ore, max(bp.clay_ore, max(bp.obs_ore, bp.geo_ore)));
+            bp.ore_max = max(bp.clay_ore, max(bp.obs_ore, bp.geo_ore));
 
             let mut state = State::default();
             state.ore_rob = 1;
 
-            let quality = tick(&bp, &state, minutes);
+            let mut quality = 0;
+            tick(&bp, &state, minutes, &mut quality);
             println!("blueprint {} quality {}", bp.id, quality);
             quality_level += bp.id * quality;
             if bp.id <= 3 {
