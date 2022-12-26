@@ -36,6 +36,11 @@ struct State {
     clay_rob: i32,
     obs_rob: i32,
     geo_rob: i32,
+/*
+    ore_proj: i32,
+    clay_proj: i32,
+    obs_proj: i32,
+*/
 }
 
 #[derive(PartialEq)]
@@ -65,14 +70,7 @@ impl State {
         self.geo += self.geo_rob;
     }
 
-    fn collect_undo(&mut self) {
-        self.ore -= self.ore_rob;
-        self.clay -= self.clay_rob;
-        self.obs -= self.obs_rob;
-        self.geo -= self.geo_rob;
-    }
-
-    fn perform_action(&mut self, bp: &Blueprint, action: &BuildAction) {
+    fn perform_action(&mut self, bp: &Blueprint, action: &BuildAction, min: i32) {
         self.collect_stuff();
         match action {
             BuildAction::OreRobot => {
@@ -96,47 +94,20 @@ impl State {
             BuildAction::NoRobot => { },
         }
     }
-
-    fn undo_action(&mut self, bp: &Blueprint, action: &BuildAction) {
-        match action {
-            BuildAction::OreRobot => {
-                self.ore += bp.ore_ore;
-                self.ore_rob -= 1;
-            },
-            BuildAction::ClayRobot => {
-                self.ore += bp.clay_ore;
-                self.clay_rob -= 1;
-            },
-            BuildAction::ObsRobot => {
-                self.ore += bp.obs_ore;
-                self.clay += bp.obs_clay;
-                self.obs_rob -= 1;
-            },
-            BuildAction::GeoRobot => {
-                self.ore += bp.geo_ore;
-                self.obs += bp.geo_obs;
-                self.geo_rob -= 1;
-            }
-            BuildAction::NoRobot => { },
-        }
-        self.collect_undo();
-    }
 }
-
-const MINUTES: i32 = 24;
 
 fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
     let mut geodes_made = 0;
 
-    if min == MINUTES {
+    if min == 0 {
         return state.geo;
     }
 
     for action in [BuildAction::GeoRobot, BuildAction::ObsRobot, BuildAction::OreRobot, BuildAction::ClayRobot, BuildAction::NoRobot] {
         if state.check_action(bp, &action) {
             let mut state = state.clone();
-            state.perform_action(bp, &action);
-            geodes_made = max(geodes_made, tick(bp, &state, min + 1));
+            state.perform_action(bp, &action, min);
+            geodes_made = max(geodes_made, tick(bp, &state, min - 1));
 
             // not sure if it's valid - it's not, as evidenced by part 2 sample blueprint 1
 //            if action == BuildAction::GeoRobot || action == BuildAction::ObsRobot {
@@ -151,7 +122,14 @@ fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
 fn main() {
     let args: Vec<String> = env::args().collect();
     let file_path = &args[1];
+    let minutes: i32 = args[2].parse().unwrap();
+    let mut blueprints = i32::MAX;
     let mut quality_level = 0;
+    let mut quality_multiply = 1;
+
+    if args.len() > 3 {
+        blueprints = args[3].parse().unwrap();
+    }
 
     // Blueprint 1: Each ore robot costs 3 ore. Each clay robot costs 4 ore. Each obsidian robot costs 4 ore and 13 clay. Each geode robot costs 3 ore and 7 obsidian.
     let re = Regex::new(r"Blueprint (\d+): Each ore robot costs (\d+) ore. Each clay robot costs (\d+) ore. Each obsidian robot costs (\d+) ore and (\d+) clay. Each geode robot costs (\d+) ore and (\d+) obsidian.").unwrap();
@@ -175,10 +153,17 @@ fn main() {
             let mut state = State::default();
             state.ore_rob = 1;
 
-            let quality = tick(&bp, &state, 0);
+            let quality = tick(&bp, &state, minutes);
             println!("blueprint {} quality {}", bp.id, quality);
             quality_level += bp.id * quality;
+            if bp.id <= 3 {
+                quality_multiply *= quality_level;
+            }
+            if bp.id == blueprints {
+                break;
+            }
         }
         println!("total quality level: {}", quality_level);
+        println!("up to first 3 blueprints multiplied: {}", quality_multiply);
     }
 }
