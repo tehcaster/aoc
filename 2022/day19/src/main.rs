@@ -68,7 +68,13 @@ fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
     let mut new_state = state.clone();
     new_state.collect_stuff();
 
+    let mut can_ore = false;
+    let mut can_clay = false;
+    let mut can_obs = false;
+    let mut can_geo = false;
+
     if need_ore && state.ore >= bp.ore_ore {
+        can_ore = true;
         new_state.ore -= bp.ore_ore;
         new_state.ore_rob += 1;
         tick(bp, &new_state, min - 1, quality);
@@ -77,6 +83,7 @@ fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
     }
 
     if need_clay && state.ore >= bp.clay_ore {
+        can_clay = true;
         new_state.ore -= bp.clay_ore;
         new_state.clay_rob += 1;
         tick(bp, &new_state, min - 1, quality);
@@ -85,6 +92,7 @@ fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
     }
 
     if need_obs && state.ore >= bp.obs_ore && state.clay >= bp.obs_clay {
+        can_obs = true;
         new_state.ore -= bp.obs_ore;
         new_state.clay -= bp.obs_clay;
         new_state.obs_rob += 1;
@@ -95,6 +103,7 @@ fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
     }
 
     if state.ore >= bp.geo_ore && state.obs >= bp.geo_obs {
+        can_geo = true;
         new_state.ore -= bp.geo_ore;
         new_state.obs -= bp.geo_obs;
         new_state.geo_rob += 1;
@@ -104,9 +113,22 @@ fn tick(bp: &Blueprint, state: &State, min: i32, quality: &mut i32) {
         new_state.geo_rob -= 1;
     }
 
-    if true {
-        tick(bp, &new_state, min - 1, quality);
+    // we can build (or don't need) any robot up to first clay - do it
+    if (can_ore || !need_ore) && can_clay && state.clay_rob == 0 {
+        return;
     }
+
+    // we can build (or don't need) any robot up to first obsidian - do it
+    if (can_ore || !need_ore) && (can_clay || !need_clay) && can_obs && state.obs_rob == 0 {
+        return;
+    }
+
+    // we can build (or don't need) any of the robot - do it
+    if (can_ore || !need_ore) && (can_clay || !need_clay) && (can_obs || !need_obs) && can_geo {
+        return;
+    }
+
+    tick(bp, &new_state, min - 1, quality);
 }
 
 fn main() {
