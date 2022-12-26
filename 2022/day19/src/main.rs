@@ -23,6 +23,8 @@ struct Blueprint {
     obs_clay: i32,
     geo_ore: i32,
     geo_obs: i32,
+
+    ore_max: i32,
 }
 
 #[derive(Default, Clone)]
@@ -55,9 +57,9 @@ enum BuildAction {
 impl State {
     fn check_action(&self, bp: &Blueprint, action: &BuildAction) -> bool {
         match action {
-            BuildAction::OreRobot => self.ore >= bp.ore_ore,
-            BuildAction::ClayRobot => self.ore >= bp.clay_ore,
-            BuildAction::ObsRobot => self.ore >= bp.obs_ore && self.clay >= bp.obs_clay,
+            BuildAction::OreRobot => self.ore >= bp.ore_ore && bp.ore_max > self.ore_rob,
+            BuildAction::ClayRobot => self.ore >= bp.clay_ore && bp.obs_clay > self.clay_rob,
+            BuildAction::ObsRobot => self.ore >= bp.obs_ore && self.clay >= bp.obs_clay && bp.geo_obs > self.obs_rob,
             BuildAction::GeoRobot => self.ore >= bp.geo_ore && self.obs >= bp.geo_obs,
             BuildAction::NoRobot => true,
         }
@@ -70,25 +72,34 @@ impl State {
         self.geo += self.geo_rob;
     }
 
-    fn perform_action(&mut self, bp: &Blueprint, action: &BuildAction, min: i32) {
+    fn perform_action(&mut self, bp: &Blueprint, action: &BuildAction) {
         self.collect_stuff();
         match action {
             BuildAction::OreRobot => {
                 self.ore -= bp.ore_ore;
+//                self.ore_proj -= bp.ore_ore;
                 self.ore_rob += 1;
+//                self.ore_proj += min;
             },
             BuildAction::ClayRobot => {
                 self.ore -= bp.clay_ore;
+//                self.ore_proj -= bp.clay_ore;
                 self.clay_rob += 1;
+//                self.clay_proj += min;
             },
             BuildAction::ObsRobot => {
                 self.ore -= bp.obs_ore;
+//                self.ore_proj -= bp.obs_ore;
                 self.clay -= bp.obs_clay;
+//                self.clay_proj -= bp.obs_clay;
                 self.obs_rob += 1;
+//                self.obs_proj += min;
             },
             BuildAction::GeoRobot => {
                 self.ore -= bp.geo_ore;
+//                self.ore_proj -= bp.geo_ore;
                 self.obs -= bp.geo_obs;
+//                self.obs_proj -= bp.geo_obs;
                 self.geo_rob += 1;
             }
             BuildAction::NoRobot => { },
@@ -106,7 +117,7 @@ fn tick(bp: &Blueprint, state: &State, min: i32) -> i32 {
     for action in [BuildAction::GeoRobot, BuildAction::ObsRobot, BuildAction::OreRobot, BuildAction::ClayRobot, BuildAction::NoRobot] {
         if state.check_action(bp, &action) {
             let mut state = state.clone();
-            state.perform_action(bp, &action, min);
+            state.perform_action(bp, &action);
             geodes_made = max(geodes_made, tick(bp, &state, min - 1));
 
             // not sure if it's valid - it's not, as evidenced by part 2 sample blueprint 1
@@ -140,7 +151,7 @@ fn main() {
         for line in lines {
             let cap = re.captures(&line).unwrap();
 
-            let bp = Blueprint {
+            let mut bp = Blueprint {
                 id: cap[1].parse().unwrap(),
                 ore_ore: cap[2].parse().unwrap(),
                 clay_ore: cap[3].parse().unwrap(),
@@ -148,7 +159,10 @@ fn main() {
                 obs_clay: cap[5].parse().unwrap(),
                 geo_ore: cap[6].parse().unwrap(),
                 geo_obs: cap[7].parse().unwrap(),
+                ore_max: 0,
             };
+
+            bp.ore_max = max(bp.ore_ore, max(bp.clay_ore, max(bp.obs_ore, bp.geo_ore)));
 
             let mut state = State::default();
             state.ore_rob = 1;
@@ -157,7 +171,7 @@ fn main() {
             println!("blueprint {} quality {}", bp.id, quality);
             quality_level += bp.id * quality;
             if bp.id <= 3 {
-                quality_multiply *= quality_level;
+                quality_multiply *= quality;
             }
             if bp.id == blueprints {
                 break;
